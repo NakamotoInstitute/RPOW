@@ -64,7 +64,7 @@ typedef struct rpowpend {
 /* rpow functions are declared in rpowclient.h */
 
 char * powresource (unsigned char *cardid);
-rpowpend *rpowpend_gen (int value, pubkey *);
+rpowpend *rpowpend_gen (int value, int dohide, pubkey *);
 int rpowpend_write (rpowpend *, rpowio *rpio);
 rpowpend *rpowpend_read (rpowio *rpio);
 rpow * rpowpend_rpow (rpowpend *, pubkey *, rpowio *rpio);

@@ -46,9 +46,9 @@
 
 
 /*
- * Given a certificate, create a random master secret, encrypt it using
- * the key in the cert, and put it in the output.  Also generate our TDES
- * I/O keys and associated values and return those as well.
+ * Given an RSA key, create a random master secret, encrypt it using
+ * the key, and put it in the output.  Also generate our TDES
+ * I/O keys and associated values and return those in encdata.
  */
 int
 encryptmaster (struct encstate *encdata, RSA *rsa,

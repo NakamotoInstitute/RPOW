@@ -160,6 +160,8 @@ rpow_read (rpowio *rpio)
 		if (rp_read (rpio, &hclen, sizeof(hclen)) != sizeof(hclen))
 			goto error;
 		rp->idlen = ntohl(hclen);
+		if (rp->idlen > MAX_TOK)
+			goto error;
 		rp->id = malloc (rp->idlen + 1);
 		if (rp_read (rpio, rp->id, rp->idlen) != rp->idlen)
 			goto error;
@@ -184,6 +186,96 @@ error:
 	free (rp);
 	return NULL;
 }
+
+/* Read an RPOW value from an ascii string */
+rpow *
+rpow_from_string (char *str)
+{
+	rpow *rp;
+	unsigned strlength;
+	char *str64;
+
+	strlength = strlen(str);
+	/* Determine whether it is pure hashcash or a base64 rpow */
+	if (strncmp (str, "1:", 2) == 0)
+	{
+		str64 = hc_to_buffer (str, &strlength);
+	} else {
+		/* De-base64 */
+		str64 = malloc (strlength);
+		strlength = dec64 (str64, str, strlength);
+	}
+	return rpow_from_buf (NULL, str64, strlength);
+}
+
+
+/* Read an RPOW value from a binary buffer */
+rpow *
+rpow_from_buf (unsigned *bytesused, unsigned char *buf, unsigned inlen)
+{
+	rpow *rp;
+	rpowio *rpioin;
+	BIO *bioin;
+	char *memptr;
+	unsigned bytesleft;
+
+	bioin = BIO_new(BIO_s_mem());
+	rpioin = rp_new_from_bio (bioin);
+	BIO_write (bioin, buf, inlen);
+	rp = rpow_read (rpioin);
+	if (bytesused)
+	{
+		bytesleft = BIO_get_mem_data(bioin, &memptr);
+		*bytesused = inlen - bytesleft;
+	}
+	rp_free (rpioin);
+	return rp;
+}
+
+/* Output RPOW value to a malloc'd binary buffer */
+unsigned char *
+rpow_to_buf (unsigned *outlen, rpow *rp)
+{
+	rpowio *rpioout;
+	BIO *bioout;
+	char *buf;
+	unsigned char *outbuf;
+	unsigned buflen;
+
+	bioout = BIO_new(BIO_s_mem());
+	rpioout = rp_new_from_bio (bioout);
+	rpow_write (rp, rpioout);
+	buflen = BIO_get_mem_data (bioout, &buf);
+	outbuf = malloc (buflen);
+	memcpy (outbuf, buf, buflen);
+	rp_free (rpioout);
+	if (outlen)
+		*outlen = buflen;
+	return buf;
+}
+
+
+/* Return a malloc'd base64 string representing an RPOW */
+char *
+rpow_to_string (rpow *rp)
+{
+	rpowio *rpioout;
+	BIO *bioout;
+	char *buf;
+	char *buf64;
+	unsigned buflen;
+
+	bioout = BIO_new(BIO_s_mem());
+	rpioout = rp_new_from_bio (bioout);
+	rpow_write (rp, rpioout);
+	buflen = BIO_get_mem_data (bioout, &buf);
+	buf64 = malloc (2*buflen);
+	buflen = enc64 (buf64, buf, buflen);
+	buf64[buflen] = '\0';
+	rp_free (rpioout);
+	return buf64;
+}
+
 
 /* Write out an rpow value */
 int
@@ -210,6 +302,182 @@ rpow_write (rpow *rp, rpowio *rpio)
 			return -1;
 	}
 	return 0;
+}
+
+
+/* Prove possession of an RPOW signature without revealing it.  Both sides
+ * know the value that got signed, and we emit a non interactive
+ * zero knowledge proof that we know a root of that value.
+ * sig is the signature we know.  value is the
+ * value of the RP (used to derive the exponent), proofstrength is the log
+ * of the work factor to forge a proof (should be 64-80 range).  pk is the
+ * public key of the RPOW signer, and rpio is where the proof goes.
+ * This is done with the Guillou-Quisquater identification protocol.
+ * The protocol has prover give rn to verifier (supposedly r^n);
+ * verifier gives c to prover;
+ * prover gives v to verifier (supposedly nth root of rpow, to the c, times r);
+ * verification is val^c * rn == v^n
+ * We do it non-interactively, where we create all the commitments, then do
+ * the challenge as the hash of the commitments.
+ */
+
+static int
+rpow_proof_rounds (gbignum *exp, int proofstrength)
+{
+	gbignum t;
+	int bit = 0;
+
+	gbig_init (&t);
+	gbig_set_bit (&t, bit);
+	while (gbig_cmp (exp, &t) >= 0)
+	{
+		gbig_from_word (&t, 0);
+		gbig_set_bit (&t, ++bit);
+	}
+	gbig_free (&t);
+	return (proofstrength + bit - 1) / bit;
+}
+	
+static int
+rpow_sig_prove (gbignum *sig, int value, int proofstrength,
+	pubkey *pk, rpowio *rpio)
+{
+	gbignum exp;
+	gbignum rn;
+	gbignum c;
+	gbignum *rnd;
+	uchar chalbuf[SHA1_DIGEST_LENGTH];
+	uchar *rnp;
+	unsigned rnlen, rnlen1;
+	gbig_sha1ctx ctx;
+	int rounds;
+	int r;
+	int err = 0;
+
+	gbig_sha1_init (&ctx);
+	gbig_init (&exp);
+	gbig_init (&rn);
+	gbig_init (&c);
+
+	if ((err = valuetoexp (&exp, value, pk)) < 0)
+		return err;
+	rounds = rpow_proof_rounds (&exp, proofstrength);
+	rnd = malloc (rounds * sizeof(gbignum));
+	if (rnd == NULL)
+		return -1;
+	for (r=0; r<rounds; r++)
+	{
+		gbig_init (&rnd[r]);
+		gbig_rand_range (&rnd[r], &gbig_value_zero, &pk->n);
+		gbig_mod_exp (&rn, &rnd[r], &exp, &pk->n);
+		if ((err = bnwrite (&rn, rpio)) < 0)
+			return err;
+		rnlen = gbig_buflen (&rn);
+		rnp = malloc (rnlen);
+		if (rnp == NULL)
+			return -1;
+		gbig_to_buf (rnp, &rn);
+		rnlen1 = htonl(rnlen);
+		gbig_sha1_update (&ctx, &rnlen1, sizeof(rnlen1));
+		gbig_sha1_update (&ctx, rnp, rnlen);
+		free (rnp);
+	}
+	gbig_sha1_final (chalbuf, &ctx);
+
+	for (r=0; r<rounds; r++)
+	{
+		gbig_sha1_buf (chalbuf, chalbuf, sizeof(chalbuf));
+		gbig_from_buf (&c, chalbuf, sizeof(chalbuf));
+		gbig_mod_exp (&rn, sig, &c, &pk->n);
+		gbig_mod_mul (&rn, &rn, &rnd[r], &pk->n);
+		if ((err = bnwrite (&rn, rpio)) < 0)
+			return err;
+		gbig_free (&rnd[r]);
+	}
+
+	free (rnd);
+	gbig_free (&exp);
+	gbig_free (&rn);
+	gbig_free (&c);	
+	return 0;
+}
+
+/* Verify a proof written by the proof function; return 0 if OK */
+static int
+rpow_sig_verify (gbignum *rp, int value, int proofstrength,
+	pubkey *pk, rpowio *rpio)
+{
+	gbignum exp;
+	gbignum *rn = NULL;
+	gbignum c;
+	gbignum t1;
+	gbignum t2;
+	uchar chalbuf[SHA1_DIGEST_LENGTH];
+	uchar *rnp;
+	unsigned rnlen, rnlen1;
+	gbig_sha1ctx ctx;
+	int rounds;
+	int r;
+	int err = 0;
+
+	gbig_sha1_init (&ctx);
+	gbig_init (&exp);
+	gbig_init (&c);
+	gbig_init (&t1);
+	gbig_init (&t2);
+
+	if ((err = valuetoexp (&exp, value, pk)) < 0)
+		return err;
+	rounds = rpow_proof_rounds (&exp, proofstrength);
+	rn = malloc (rounds * sizeof(gbignum));
+	if (rn == NULL)
+		goto error;
+	for (r=0; r<rounds; r++)
+	{
+		gbig_init (&rn[r]);
+		if ((err = bnread (&rn[r], rpio)) < 0)
+			goto error;
+		rnlen = gbig_buflen (&rn[r]);
+		rnp = malloc (rnlen);
+		if (rnp == NULL)
+			goto error;
+		gbig_to_buf (rnp, &rn[r]);
+		rnlen1 = htonl(rnlen);
+		gbig_sha1_update (&ctx, &rnlen1, sizeof(rnlen1));
+		gbig_sha1_update (&ctx, rnp, rnlen);
+		free (rnp);
+	}
+	gbig_sha1_final (chalbuf, &ctx);
+
+	for (r=0; r<rounds; r++)
+	{
+		gbig_sha1_buf (chalbuf, chalbuf, sizeof(chalbuf));
+		gbig_from_buf (&c, chalbuf, sizeof(chalbuf));
+		gbig_mod_exp (&t1, rp, &c, &pk->n);
+		gbig_mod_mul (&t1, &t1, &rn[r], &pk->n);
+		if ((err = bnread (&rn[r], rpio)) < 0)
+			goto error;
+		gbig_mod_exp (&t2, &rn[r], &exp, &pk->n);
+		gbig_free (&rn[r]);
+		if (gbig_cmp (&t1, &t2) != 0)
+			goto error;
+	}
+
+	free (rn);
+	gbig_free (&exp);
+	gbig_free (&c);
+	gbig_free (&t1);
+	gbig_free (&t2);
+	return 0;
+
+error:
+	if (rn)
+		free (rn);
+	gbig_free (&exp);
+	gbig_free (&c);
+	gbig_free (&t1);
+	gbig_free (&t2);
+	return -1;
 }
 
 
@@ -260,13 +528,14 @@ rpow_gen (int value, unsigned char *cardid)
 		return NULL;
 	}
 
-	rp->idlen = MAX_TOK;
-	rp->id = malloc (rp->idlen);
 	rp->value = value;
 
-	ok = hashcash_mint1 (time(0), 0, resource, value, 0,
-			rp->id, rp->idlen, NULL, &tries, NULL);
+	ok = hashcash_mint (time(0), 0, resource, value, 0,
+			(char **)&rp->id, NULL, &tries, NULL, 0,
+			NULL, NULL);
 	assert (ok == 1);
+
+	/* rp->id holds a malloc buffer with the token */
 	rp->idlen = strlen(rp->id);
 	rp->type = RPOW_TYPE_HASHCASH;
 	return rp;
@@ -298,9 +567,10 @@ rpowpend_bn_gen (gbignum *bn, uchar *id, unsigned idlen, pubkey *pk)
 }
 
 
-/* Generate a value suitable for putting into an rpowpend */
+/* Generate an rpowpend of the specified value */
+/* dohide means to hide the value to be signed, used for splitting rpows */
 rpowpend *
-rpowpend_gen (int value, pubkey *pk)
+rpowpend_gen (int value, int dohide, pubkey *pk)
 {
 	rpowpend *rpend = calloc (sizeof(rpowpend), 1);
 	gbignum hider;
@@ -323,10 +593,18 @@ rpowpend_gen (int value, pubkey *pk)
 	memcpy (rpend->id + rpend->idlen - CARDID_LENGTH, pk->cardid,
 			CARDID_LENGTH);
 	rpowpend_bn_gen (&rpend->rpow, rpend->id, rpend->idlen, pk);
-	gbig_init (&rpend->rpowhidden);
-	gbig_init (&rpend->invhider);
-	gbig_copy (&rpend->rpowhidden, &rpend->rpow);
-	gbig_from_word (&rpend->invhider, 1);
+	if (dohide)
+	{
+		gbig_rand_range (&hider, &gbig_value_zero, &pk->n);
+		gbig_mod_inverse (&rpend->invhider, &hider, &pk->n);
+		gbig_mod_exp (&ehider, &hider, &exp, &pk->n);
+		gbig_mod_mul (&rpend->rpowhidden, &rpend->rpow, &ehider, &pk->n);
+	}
+	else
+	{
+		gbig_copy (&rpend->rpowhidden, &rpend->rpow);
+		gbig_from_word (&rpend->invhider, 1);
+	}
 	gbig_free (&exp);
 	gbig_free (&hider);
 	gbig_free (&ehider);
@@ -350,6 +628,8 @@ rpowpend_read (rpowio *rpio)
 		goto error;
 	if (bnread (&rpend->rpow, rpio) < 0)
 		goto error;
+	gbig_copy (&rpend->rpowhidden, &rpend->rpow);
+	gbig_from_word (&rpend->invhider, 1);
 	return rpend;
 error:
 	gbig_free (&rpend->rpow);

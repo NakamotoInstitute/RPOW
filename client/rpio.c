@@ -63,6 +63,15 @@ rp_new_from_bio (BIO *bio)
 	return rp_newx (NULL, bio);
 }
 
+rpowio *
+rp_new_from_buf (unsigned char *buf, unsigned buflen)
+{
+	BIO *bio = BIO_new(BIO_s_mem());
+	rpowio *rpio = rp_new_from_bio (bio);
+	BIO_write (bio, buf, buflen);
+	return rpio;
+}
+
 
 void
 rp_free (rpowio *rp)

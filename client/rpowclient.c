@@ -88,8 +88,8 @@ static void server_write (int npow, rpow **rpows, int npend, rpowpend **rpends,
 /*
  * Given a set of input rpows, and the desired number and denomination
  * of output rpows, do an exchange at the server and return a status
- * code and, if OK, the output rpows.  **outvals should be pre-allocated
- * to hold nout items of type rpow *.
+ * code and, if OK, the output rpows.  Output array *rpout should be
+ * pre-allocated as an array of pointers to rpow, nout items long.
  */
 int
 server_exchange (rpow **rpout, char *target, int port, int nin, rpow **rpin,
@@ -130,8 +130,9 @@ signpubkey = *signkey;
 
 	rpend = malloc (nout * sizeof (rpowpend *));
 	for (i=0; i<nout; i++)
-		rpend[i] = rpowpend_gen (outvals[i], signkey);
+		rpend[i] = rpowpend_gen (outvals[i], 0, signkey);
 
+	/* Output formatted request to bio buffer via rpio */
 	server_write (nin, rpin, nout, rpend, rpio, signkey);
 
 	/* Do the exchange with the IBM4758 */
@@ -145,7 +146,7 @@ signpubkey = *signkey;
 		return -2;
 	}
 
-	/* Read results */
+	/* Read results. bio buffer rpio points at holds the output from server. */
 	rp_read (rpio, &stat, 1);
 	if (stat != 0)
 	{
@@ -154,7 +155,7 @@ signpubkey = *signkey;
 			rpowpend_free (rpend[i]);
 		free (rpend);
 		rp_free (rpio);
-		return stat;
+		return -100-stat;
 	}
 
 	for (i=0; i<nout; i++)
@@ -176,6 +177,116 @@ signpubkey = *signkey;
 
 	return 0;
 }
+
+/* Higher level functions for simplified exchanges */
+rpow *
+rpow_exchange_even (rpow *rpin, char *target, int port, pubkey *signkey)
+{
+	rpow *rpout = NULL;
+	int outval = rpin->value;
+	int status;
+
+	status = server_exchange (&rpout, target, port, 1, &rpin, 1, &outval, signkey);
+	if (status != 0)
+		return NULL;
+	return rpout;
+}
+
+rpow *
+rpow_exchange_bigger (rpow *rpin1, rpow *rpin2, char *target, int port, pubkey *signkey)
+{
+	rpow *rpout = NULL;
+	rpow *rpins[2];
+	int outval = rpin1->value+1;
+	int status;
+
+	if (rpin2->value != rpin1->value)
+		return NULL;
+
+	rpins[0] = rpin1;
+	rpins[1] = rpin2;
+
+	status = server_exchange (&rpout, target, port, 2, rpins, 1, &outval, signkey);
+	if (status != 0)
+		return NULL;
+	return rpout;
+}
+
+rpow *
+rpow_exchange_bigger4 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4, char *target,
+	int port, pubkey *signkey)
+{
+	rpow *rpout = NULL;
+	rpow *rpins[4];
+	int outval = rpin1->value+2;
+	int status;
+
+	if (rpin2->value != rpin1->value || rpin3->value != rpin1->value
+			|| rpin4->value != rpin1->value)
+		return NULL;
+
+	rpins[0] = rpin1;
+	rpins[1] = rpin2;
+	rpins[2] = rpin3;
+	rpins[3] = rpin4;
+
+	status = server_exchange (&rpout, target, port, 4, rpins, 1, &outval, signkey);
+	if (status != 0)
+		return NULL;
+	return rpout;
+}
+
+rpow *
+rpow_exchange_bigger8 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4, rpow *rpin5,
+	rpow *rpin6, rpow *rpin7, rpow *rpin8, char *target, int port, pubkey *signkey)
+{
+	rpow *rpout = NULL;
+	rpow *rpins[8];
+	int outval = rpin1->value+3;
+	int status;
+
+	if (rpin2->value != rpin1->value || rpin3->value != rpin1->value
+			|| rpin4->value != rpin1->value || rpin5->value != rpin1->value
+			|| rpin5->value != rpin1->value || rpin5->value != rpin1->value
+			|| rpin5->value != rpin1->value)
+		return NULL;
+
+	rpins[0] = rpin1;
+	rpins[1] = rpin2;
+	rpins[2] = rpin3;
+	rpins[3] = rpin4;
+	rpins[4] = rpin5;
+	rpins[5] = rpin6;
+	rpins[6] = rpin7;
+	rpins[7] = rpin8;
+
+	status = server_exchange (&rpout, target, port, 8, rpins, 1, &outval, signkey);
+	if (status != 0)
+		return NULL;
+	return rpout;
+}
+
+rpow *
+rpow_exchange_smaller (rpow **rpout2, rpow *rpin, char *target, int port, pubkey *signkey)
+{
+	rpow *rpouts[2];
+	int outvals[2];
+	int status;
+
+	*rpout2 = NULL;
+	if (rpin->value == RPOW_VALUE_MIN)
+		return NULL;
+
+	outvals[0] = outvals[1] = rpin->value-1;
+	rpouts[0] = rpouts[1] = NULL;
+
+	status = server_exchange (rpouts, target, port, 1, &rpin, 2, outvals, signkey);
+	if (status != 0)
+		return NULL;
+	*rpout2 = rpouts[1];
+	return rpouts[0];
+}
+
 
 static void
 server_write (int npow, rpow **rpows, int npend, rpowpend **rpends,

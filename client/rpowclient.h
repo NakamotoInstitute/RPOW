@@ -86,6 +86,16 @@ extern int targetport;
 
 int server_exchange (rpow **rpout, char *target, int port, int nin, rpow **rpin,
 	int nout, int *outvals, pubkey *signkey);
+rpow *rpow_exchange_even (rpow *rpin, char *target, int port, pubkey *signkey);
+rpow *rpow_exchange_bigger (rpow *rpin1, rpow *rpin2, char *target, int port,
+	pubkey *signkey);
+rpow *rpow_exchange_bigger4 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4,
+	char *target, int port, pubkey *signkey);
+rpow *rpow_exchange_bigger8 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4,
+	rpow *rpin5, rpow *rpin6, rpow *rpin7, rpow *rpin8, char *target, int port,
+	pubkey *signkey);
+rpow *rpow_exchange_smaller (rpow **rpout2, rpow *rpin, char *target, int port,
+	pubkey *signkey);
 void initfilenames (void);
 
 /* connio.c */
@@ -98,6 +108,7 @@ int comm4758 (BIO *bio, char *target, int port, pubkey *signkey);
 
 rpowio *rp_new_from_file (FILE *f);
 rpowio *rp_new_from_bio (BIO *bio);
+rpowio *rp_new_from_buf (unsigned char *buf, unsigned buflen);
 void rp_free (rpowio *);
 int rp_write (rpowio *, void *, unsigned);
 int rp_read (rpowio *, void *, unsigned);
@@ -117,6 +128,10 @@ rpow *rpow_gen (int value, unsigned char *cardid);
 int rpow_write(rpow *, rpowio *);
 rpow *rpow_read (rpowio *rpio);
 void rpow_free (rpow *);
+rpow *rpow_from_string (char *str);
+rpow *rpow_from_buf (unsigned *bytesused, unsigned char *buf, unsigned inlen);
+unsigned char *rpow_to_buf (unsigned *outlen, rpow *rp);
+char *rpow_to_string (rpow *rp);
 
 unsigned char * hc_to_buffer (char *buf, int *pbuflen);
 
