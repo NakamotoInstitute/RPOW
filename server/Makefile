@@ -1,7 +1,7 @@
 # Makefile for host 4758 applications
 # Remember to set SCCTK_FS_ROOT!!
 
-SCCTK_FS_ROOT=/scctk
+SCCTK_FS_ROOT=../../scctk
 
 CFLAGS = -g -c -D_LINUX_  -I. -I../common \
 	-I$(SCCTK_FS_ROOT)/include/env/linux -I$(SCCTK_FS_ROOT)/include/host \

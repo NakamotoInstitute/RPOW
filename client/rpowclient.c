@@ -63,6 +63,11 @@ char *commfile;
 char targethost[256];
 int targetport = DEFAULTPORT;
 
+/* SOCKS V5 host and port, optional */
+int usesocks = 0;
+char sockshost[256];
+int socksport;
+
 /* Temporary, the one public signing key we know about */
 pubkey signpubkey;
 
@@ -178,115 +183,6 @@ signpubkey = *signkey;
 	return 0;
 }
 
-/* Higher level functions for simplified exchanges */
-rpow *
-rpow_exchange_even (rpow *rpin, char *target, int port, pubkey *signkey)
-{
-	rpow *rpout = NULL;
-	int outval = rpin->value;
-	int status;
-
-	status = server_exchange (&rpout, target, port, 1, &rpin, 1, &outval, signkey);
-	if (status != 0)
-		return NULL;
-	return rpout;
-}
-
-rpow *
-rpow_exchange_bigger (rpow *rpin1, rpow *rpin2, char *target, int port, pubkey *signkey)
-{
-	rpow *rpout = NULL;
-	rpow *rpins[2];
-	int outval = rpin1->value+1;
-	int status;
-
-	if (rpin2->value != rpin1->value)
-		return NULL;
-
-	rpins[0] = rpin1;
-	rpins[1] = rpin2;
-
-	status = server_exchange (&rpout, target, port, 2, rpins, 1, &outval, signkey);
-	if (status != 0)
-		return NULL;
-	return rpout;
-}
-
-rpow *
-rpow_exchange_bigger4 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4, char *target,
-	int port, pubkey *signkey)
-{
-	rpow *rpout = NULL;
-	rpow *rpins[4];
-	int outval = rpin1->value+2;
-	int status;
-
-	if (rpin2->value != rpin1->value || rpin3->value != rpin1->value
-			|| rpin4->value != rpin1->value)
-		return NULL;
-
-	rpins[0] = rpin1;
-	rpins[1] = rpin2;
-	rpins[2] = rpin3;
-	rpins[3] = rpin4;
-
-	status = server_exchange (&rpout, target, port, 4, rpins, 1, &outval, signkey);
-	if (status != 0)
-		return NULL;
-	return rpout;
-}
-
-rpow *
-rpow_exchange_bigger8 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4, rpow *rpin5,
-	rpow *rpin6, rpow *rpin7, rpow *rpin8, char *target, int port, pubkey *signkey)
-{
-	rpow *rpout = NULL;
-	rpow *rpins[8];
-	int outval = rpin1->value+3;
-	int status;
-
-	if (rpin2->value != rpin1->value || rpin3->value != rpin1->value
-			|| rpin4->value != rpin1->value || rpin5->value != rpin1->value
-			|| rpin5->value != rpin1->value || rpin5->value != rpin1->value
-			|| rpin5->value != rpin1->value)
-		return NULL;
-
-	rpins[0] = rpin1;
-	rpins[1] = rpin2;
-	rpins[2] = rpin3;
-	rpins[3] = rpin4;
-	rpins[4] = rpin5;
-	rpins[5] = rpin6;
-	rpins[6] = rpin7;
-	rpins[7] = rpin8;
-
-	status = server_exchange (&rpout, target, port, 8, rpins, 1, &outval, signkey);
-	if (status != 0)
-		return NULL;
-	return rpout;
-}
-
-rpow *
-rpow_exchange_smaller (rpow **rpout2, rpow *rpin, char *target, int port, pubkey *signkey)
-{
-	rpow *rpouts[2];
-	int outvals[2];
-	int status;
-
-	*rpout2 = NULL;
-	if (rpin->value == RPOW_VALUE_MIN)
-		return NULL;
-
-	outvals[0] = outvals[1] = rpin->value-1;
-	rpouts[0] = rpouts[1] = NULL;
-
-	status = server_exchange (rpouts, target, port, 1, &rpin, 2, outvals, signkey);
-	if (status != 0)
-		return NULL;
-	*rpout2 = rpouts[1];
-	return rpouts[0];
-}
-
 
 static void
 server_write (int npow, rpow **rpows, int npend, rpowpend **rpends,
@@ -374,6 +270,7 @@ readconfig (char *fname)
 	FILE *f = fopen (fname, "r");
 	char *host, *pport;
 	char *key, *val;
+	int gothost = 0;
 
 	if (f == NULL)
 	{
@@ -381,34 +278,65 @@ readconfig (char *fname)
 		exit (1);
 	}
 
-	readconfigline (f, &key, &val);
-	if (key == NULL)
+	for ( ; ; )
+	{
+		readconfigline (f, &key, &val);
+		if (key == NULL && val == NULL)
+			break;
+		if (strcasecmp (key, "host") == 0)
+		{
+			host = val;
+			pport = strchr (host, ':');
+			if (pport != NULL)
+			{
+				*pport++ = '\0';
+				targetport = atoi(pport);
+				if (targetport <= 0 || targetport >= 65536)
+				{
+					fprintf (stderr, "Illegal port number %d in config file %s\n",
+						targetport, fname);
+					exit (1);
+				}
+			}
+			strcpy (targethost, host);
+			gothost = 1;
+		}
+		else if (strcasecmp (key, "socks5") == 0)
+		{
+			host = val;
+			pport = strchr (host, ':');
+			if (pport == NULL)
+			{
+				fprintf (stderr, "Missing socks port number in config file %s\n",
+						fname);
+				exit (1);
+			}
+			*pport++ = '\0';
+			socksport = atoi(pport);
+			if (socksport <= 0 || socksport >= 65536)
+			{
+				fprintf (stderr, "Illegal socks port number %d in config file %s\n",
+					socksport, fname);
+				exit (1);
+			}
+			strcpy (sockshost, host);
+			usesocks = 1;
+		}
+		else
+		{
+			fprintf (stderr, "Unrecognized keyword %s in config file %s\n",
+				key, fname);
+			exit (1);
+		}
+	}
+
+	fclose (f);
+
+	if (!gothost)
 	{
 		fprintf (stderr, "Missing host entry in config file %s\n", fname);
 		exit (1);
 	}
-	if (strcasecmp (key, "host") != 0)
-	{
-		fprintf (stderr, "Unrecognized keyword %s in config file %s\n",
-			key, fname);
-		exit (1);
-	}
-
-	fclose (f);
-	host = val;
-	pport = strchr (host, ':');
-	if (pport != NULL)
-	{
-		*pport++ = '\0';
-		targetport = atoi(pport);
-		if (targetport <= 0 || targetport >= 65536)
-		{
-			fprintf (stderr, "Illegal port number %d in config file %s\n",
-				targetport, fname);
-			exit (1);
-		}
-	}
-	strcpy (targethost, host);
 }
 
 void

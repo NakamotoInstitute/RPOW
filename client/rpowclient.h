@@ -81,21 +81,16 @@ extern char *commfile;
 extern char targethost[256];
 extern int targetport;
 
+/* Optional SOCKS V5 host and port */
+extern int usesocks;
+extern char sockshost[256];
+extern int socksport;
+
 
 /* rpowclient.c */
 
 int server_exchange (rpow **rpout, char *target, int port, int nin, rpow **rpin,
 	int nout, int *outvals, pubkey *signkey);
-rpow *rpow_exchange_even (rpow *rpin, char *target, int port, pubkey *signkey);
-rpow *rpow_exchange_bigger (rpow *rpin1, rpow *rpin2, char *target, int port,
-	pubkey *signkey);
-rpow *rpow_exchange_bigger4 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4,
-	char *target, int port, pubkey *signkey);
-rpow *rpow_exchange_bigger8 (rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4,
-	rpow *rpin5, rpow *rpin6, rpow *rpin7, rpow *rpin8, char *target, int port,
-	pubkey *signkey);
-rpow *rpow_exchange_smaller (rpow **rpout2, rpow *rpin, char *target, int port,
-	pubkey *signkey);
 void initfilenames (void);
 
 /* connio.c */
@@ -122,7 +117,7 @@ int bnwrite( gbignum *bn, rpowio *rpio );
 void pubkey_read (pubkey *key, char *file);
 void pubkey_write (pubkey *key, char *file);
 
-/* rpow.c */
+/* rpowutil.c */
 
 rpow *rpow_gen (int value, unsigned char *cardid);
 int rpow_write(rpow *, rpowio *);
@@ -132,6 +127,9 @@ rpow *rpow_from_string (char *str);
 rpow *rpow_from_buf (unsigned *bytesused, unsigned char *buf, unsigned inlen);
 unsigned char *rpow_to_buf (unsigned *outlen, rpow *rp);
 char *rpow_to_string (rpow *rp);
+rpow * rpow_from_store (int value);
+int rpow_to_store (rpow *rp);
+int rpow_count (int counts[]);
 
 unsigned char * hc_to_buffer (char *buf, int *pbuflen);
 

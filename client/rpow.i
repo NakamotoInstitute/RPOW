@@ -1,4 +1,5 @@
 %module rpow
+%include "carrays.i"
 
 %{
 #include <fcntl.h>
@@ -35,15 +36,22 @@ typedef struct rpow {
 	int idlen;
 } rpow;
 
+/* Define new_rpowarray(n), delete_rpowarray(arr),
+ * rpowarray_getitem(arr,n), rpowarray_setitem(arr,n,val)
+ */
+%array_functions(rpow *, rpowarray)
 
-/* File names for keys */
-extern char *rpowfile;
-extern char *signfile;
-extern char *commfile;
+int
+nexchange(rpow *rpout[], rpow *rpin[], int nin, int ov1, int ov2=0, int ov3=0,
+int ov4=0, int ov5=0, int ov6=0, int ov7=0, int ov8=0, int ov9=0, int ov10=0);
 
-/* Host and port for server */
-extern char targethost[256];
-extern int targetport;
+int
+zexchange(rpow *rp1, rpow *rp2, rpow *rp3, rpow *rp4=0, rpow *rp5=0,
+rpow *rp6=0, rpow *rp7=0, rpow *rp8=0, rpow *rp9=0, rpow *rp10=0, rpow *rp11=0,
+rpow *rp12=0, rpow *rp13=0, rpow *rp14=0, rpow *rp15=0, rpow *rp16=0,
+rpow *rp17=0, rpow *rp18=0, rpow *rp19=0, rpow *rp20=0, rpow *rp21=0);
+
+void rpow_free(rpow *rp);
 
 %inline
 %{
@@ -51,32 +59,6 @@ extern int targetport;
 #define RPOW_VALUE_MAX	50
 
 pubkey signkey;
-
-
-static void
-_dolock (FILE *f)
-{
-	int err;
-	struct flock l;
-	extern int errno;
-	l.l_start = l.l_len = 0;
-	l.l_pid = 0;
-	l.l_type = F_WRLCK;
-	l.l_whence = SEEK_SET;
-	while (fcntl (fileno(f), F_SETLKW, &l) < 0 && errno == EINTR)
-		;
-}
-
-static void
-_dounlock (FILE *f)
-{
-	struct flock l;
-	l.l_start = l.l_len = 0;
-	l.l_pid = 0;
-	l.l_type = F_UNLCK;
-	l.l_whence = SEEK_SET;
-	fcntl (fileno(f), F_SETLK, &l);
-}
 
 rpow *
 gen(int value)
@@ -103,175 +85,153 @@ exchange(rpow *rpin)
 	return rpout;
 }
 
-rpow *
-join2(rpow *rpin1, rpow *rpin2)
+/* This lets you do nexchange(rpo, rpi, 4, 23, 23) to turn 4 22's to 2 23's */
+int
+nexchange(rpow *rpout[], rpow *rpin[], int nin, int ov1, int ov2, int ov3,
+int ov4, int ov5, int ov6, int ov7, int ov8, int ov9, int ov10)
 {
-	rpow *rpout = NULL;
-	rpow *rpins[2];
-	int outval;
+	int outvals[10];
+	int nout;
 	int status;
 
-	if (rpin1 == NULL || rpin2 == NULL
-			|| rpin2->value != rpin1->value)
-		return NULL;
-	outval = rpin1->value+1;
+	if (nin > 10)
+		return -1;
+	nout = 0;
+	outvals[nout++] = ov1;
+	if (ov2)
+		outvals[nout++] = ov2;
+	if (ov3)
+		outvals[nout++] = ov3;
+	if (ov4)
+		outvals[nout++] = ov4;
+	if (ov5)
+		outvals[nout++] = ov5;
+	if (ov6)
+		outvals[nout++] = ov6;
+	if (ov7)
+		outvals[nout++] = ov7;
+	if (ov8)
+		outvals[nout++] = ov8;
+	if (ov9)
+		outvals[nout++] = ov9;
+	if (ov10)
+		outvals[nout++] = ov10;
 
-	rpins[0] = rpin1;
-	rpins[1] = rpin2;
-
-	status = server_exchange (&rpout, targethost, targetport, 2, rpins, 1,
-		&outval, &signkey);
-	if (status != 0)
-		return NULL;
-	return rpout;
+	status = server_exchange (rpout, targethost, targetport, nin, rpin,
+		nout, outvals, &signkey);
+	return status;
 }
 
-rpow *
-join4(rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4)
+int
+zexchange(rpow *rp1, rpow *rp2, rpow *rp3, rpow *rp4, rpow *rp5,
+rpow *rp6, rpow *rp7, rpow *rp8, rpow *rp9, rpow *rp10, rpow *rp11,
+rpow *rp12, rpow *rp13, rpow *rp14, rpow *rp15, rpow *rp16,
+rpow *rp17, rpow *rp18, rpow *rp19, rpow *rp20, rpow *rp21)
 {
-	rpow *rpout = NULL;
-	rpow *rpins[4];
-	int outval;
+	rpow *rpi[10];
+	rpow *rpo[10];
+	rpow *rpout[10];
+	int outvals[10];
+	int nin = 0;
+	int nout = 0;
 	int status;
+	int i;
 
-	if (rpin1 == NULL || rpin2 == NULL || rpin3 == NULL || rpin4 == NULL
-			|| rpin2->value != rpin1->value || rpin3->value != rpin1->value
-			|| rpin4->value != rpin1->value)
-		return NULL;
-	outval = rpin1->value+2;
+	do {
+		if (rp1) rpi[nin++] = rp1; else break;
+		if (rp2) rpi[nin++] = rp2; else break;
+		if (rp3) rpi[nin++] = rp3; else break;
+		if (rp4) rpi[nin++] = rp4; else break;
+		if (rp5) rpi[nin++] = rp5; else break;
+		if (rp6) rpi[nin++] = rp6; else break;
+		if (rp7) rpi[nin++] = rp7; else break;
+		if (rp8) rpi[nin++] = rp8; else break;
+		if (rp9) rpi[nin++] = rp9; else break;
+		if (rp10) rpi[nin++] = rp10; else break;
+		if (rp11) rpi[nin++] = rp11; else break;
+		if (rp12) rpi[nin++] = rp12; else break;
+		if (rp13) rpi[nin++] = rp13; else break;
+		if (rp14) rpi[nin++] = rp14; else break;
+		if (rp15) rpi[nin++] = rp15; else break;
+		if (rp16) rpi[nin++] = rp16; else break;
+		if (rp17) rpi[nin++] = rp17; else break;
+		if (rp18) rpi[nin++] = rp18; else break;
+		if (rp19) rpi[nin++] = rp19; else break;
+		if (rp20) rpi[nin++] = rp20; else break;
+		if (rp21) rpi[nin++] = rp21; else break;
+	} while (0);
 
-	rpins[0] = rpin1;
-	rpins[1] = rpin2;
-	rpins[2] = rpin3;
-	rpins[3] = rpin4;
+	nout = -nin - 2;
 
-	status = server_exchange (&rpout, targethost, targetport, 4, rpins, 1,
-		&outval, &signkey);
+	do {
+		if (++nout >= 0) if (rp1) rpo[nout] = rp1; else break;
+		if (++nout >= 0) if (rp2) rpo[nout] = rp2; else break;
+		if (++nout >= 0) if (rp3) rpo[nout] = rp3; else break;
+		if (++nout >= 0) if (rp4) rpo[nout] = rp4; else break;
+		if (++nout >= 0) if (rp5) rpo[nout] = rp5; else break;
+		if (++nout >= 0) if (rp6) rpo[nout] = rp6; else break;
+		if (++nout >= 0) if (rp7) rpo[nout] = rp7; else break;
+		if (++nout >= 0) if (rp8) rpo[nout] = rp8; else break;
+		if (++nout >= 0) if (rp9) rpo[nout] = rp9; else break;
+		if (++nout >= 0) if (rp10) rpo[nout] = rp10; else break;
+		if (++nout >= 0) if (rp11) rpo[nout] = rp11; else break;
+		if (++nout >= 0) if (rp12) rpo[nout] = rp12; else break;
+		if (++nout >= 0) if (rp13) rpo[nout] = rp13; else break;
+		if (++nout >= 0) if (rp14) rpo[nout] = rp14; else break;
+		if (++nout >= 0) if (rp15) rpo[nout] = rp15; else break;
+		if (++nout >= 0) if (rp16) rpo[nout] = rp16; else break;
+		if (++nout >= 0) if (rp17) rpo[nout] = rp17; else break;
+		if (++nout >= 0) if (rp18) rpo[nout] = rp18; else break;
+		if (++nout >= 0) if (rp19) rpo[nout] = rp19; else break;
+		if (++nout >= 0) if (rp20) rpo[nout] = rp20; else break;
+		if (++nout >= 0) if (rp21) rpo[nout] = rp21; else break;
+	} while (0);
+
+	if (nin < 1 || nin > 10 || nout < 1 || nout > 10)
+		return -1;
+
+	for (i=0; i<nout; i++)
+		outvals[i] = rpo[i]->value;
+	for (i=0; i<nin; i++)
+		printf ("%d ", rpi[i]->value);
+	printf ("0 ");
+	for (i=0; i<nout; i++)
+		printf ("%d ", rpo[i]->value);
+	printf ("\n");
+
+	status = server_exchange (rpout, targethost, targetport, nin, rpi,
+		nout, outvals, &signkey);
+
 	if (status != 0)
-		return NULL;
-	return rpout;
-}
+		return status;
 
-rpow *
-join8(rpow *rpin1, rpow *rpin2, rpow *rpin3, rpow *rpin4, rpow *rpin5, rpow *rpin6, rpow *rpin7, rpow *rpin8)
-{
-	rpow *rpout = NULL;
-	rpow *rpins[8];
-	int outval;
-	int status;
+	nout = -nin - 2;
 
-	if (rpin1 == NULL || rpin2 == NULL || rpin3 == NULL || rpin4 == NULL
-			|| rpin5 == NULL || rpin6 == NULL || rpin7 == NULL || rpin8 == NULL
-			|| rpin2->value != rpin1->value || rpin3->value != rpin1->value
-			|| rpin4->value != rpin1->value || rpin5->value != rpin1->value
-			|| rpin6->value != rpin1->value || rpin7->value != rpin1->value
-			|| rpin8->value != rpin1->value)
-		return NULL;
-	outval = rpin1->value+3;
+	do {
+		if (++nout >= 0) if (rp1) *rp1 = *rpout[nout];
+		if (++nout >= 0) if (rp2) *rp2 = *rpout[nout];
+		if (++nout >= 0) if (rp3) *rp3 = *rpout[nout];
+		if (++nout >= 0) if (rp4) *rp4 = *rpout[nout];
+		if (++nout >= 0) if (rp5) *rp5 = *rpout[nout];
+		if (++nout >= 0) if (rp6) *rp6 = *rpout[nout];
+		if (++nout >= 0) if (rp7) *rp7 = *rpout[nout];
+		if (++nout >= 0) if (rp8) *rp8 = *rpout[nout];
+		if (++nout >= 0) if (rp9) *rp9 = *rpout[nout];
+		if (++nout >= 0) if (rp10) *rp10 = *rpout[nout];
+		if (++nout >= 0) if (rp11) *rp11 = *rpout[nout];
+		if (++nout >= 0) if (rp12) *rp12 = *rpout[nout];
+		if (++nout >= 0) if (rp13) *rp13 = *rpout[nout];
+		if (++nout >= 0) if (rp14) *rp14 = *rpout[nout];
+		if (++nout >= 0) if (rp15) *rp15 = *rpout[nout];
+		if (++nout >= 0) if (rp16) *rp16 = *rpout[nout];
+		if (++nout >= 0) if (rp17) *rp17 = *rpout[nout];
+		if (++nout >= 0) if (rp18) *rp18 = *rpout[nout];
+		if (++nout >= 0) if (rp19) *rp19 = *rpout[nout];
+		if (++nout >= 0) if (rp20) *rp20 = *rpout[nout];
+		if (++nout >= 0) if (rp21) *rp21 = *rpout[nout];
+	} while (0);
 
-	rpins[0] = rpin1;
-	rpins[1] = rpin2;
-	rpins[2] = rpin3;
-	rpins[3] = rpin4;
-	rpins[4] = rpin5;
-	rpins[5] = rpin6;
-	rpins[6] = rpin7;
-	rpins[7] = rpin8;
-
-	status = server_exchange (&rpout, targethost, targetport, 8, rpins, 1,
-		&outval, &signkey);
-	if (status != 0)
-		return NULL;
-	return rpout;
-}
-
-typedef struct rpows {
-	rpow *rp1, *rp2, *rp3, *rp4, *rp5, *rp6, *rp7, *rp8;
-} rpows;
-
-rpows *
-split2(rpow *rpin)
-{
-	rpows *rpp;
-	rpow *rpouts[2];
-	int outvals[2];
-	int status;
-
-	if (rpin == NULL || rpin->value == RPOW_VALUE_MIN)
-		return NULL;
-
-	outvals[0] = outvals[1] = rpin->value-1;
-	rpouts[0] = rpouts[1] = NULL;
-
-	status = server_exchange (rpouts, targethost, targetport, 1, &rpin, 2,
-		outvals, &signkey);
-	if (status != 0)
-		return NULL;
-
-	rpp = malloc(sizeof(rpows));
-	rpp->rp1 = rpouts[0];
-	rpp->rp2 = rpouts[1];
-	return rpp;
-}
-
-rpows *
-split4(rpow *rpin)
-{
-	rpows *rpp;
-	rpow *rpouts[4];
-	int outvals[4];
-	int status;
-
-	if (rpin == NULL || rpin->value <= RPOW_VALUE_MIN+1)
-		return NULL;
-
-	outvals[0] = outvals[1] = outvals[2] = outvals[3] = rpin->value-2;
-	rpouts[0] = rpouts[1] = rpouts[2] = rpouts[3] = NULL;
-
-	status = server_exchange (rpouts, targethost, targetport, 1, &rpin, 4,
-		outvals, &signkey);
-	if (status != 0)
-		return NULL;
-
-	rpp = malloc(sizeof(rpows));
-	rpp->rp1 = rpouts[0];
-	rpp->rp2 = rpouts[1];
-	rpp->rp3 = rpouts[2];
-	rpp->rp4 = rpouts[3];
-	return rpp;
-}
-
-rpows *
-split8(rpow *rpin)
-{
-	rpows *rpp;
-	rpow *rpouts[8];
-	int outvals[8];
-	int status;
-
-	if (rpin == NULL || rpin->value <= RPOW_VALUE_MIN+2)
-		return NULL;
-
-	outvals[0] = outvals[1] = outvals[2] = outvals[3] = 
-		outvals[4] = outvals[5] = outvals[6] = outvals[7] = rpin->value-3;
-	rpouts[0] = rpouts[1] = rpouts[2] = rpouts[3] = 
-		rpouts[4] = rpouts[5] = rpouts[6] = rpouts[7] = NULL;
-
-	status = server_exchange (rpouts, targethost, targetport, 1, &rpin, 8,
-		outvals, &signkey);
-	if (status != 0)
-		return NULL;
-
-	rpp = malloc(sizeof(rpows));
-	rpp->rp1 = rpouts[0];
-	rpp->rp2 = rpouts[1];
-	rpp->rp3 = rpouts[2];
-	rpp->rp4 = rpouts[3];
-	rpp->rp5 = rpouts[4];
-	rpp->rp6 = rpouts[5];
-	rpp->rp7 = rpouts[6];
-	rpp->rp8 = rpouts[7];
-	return rpp;
+	return 0;
 }
 
 
@@ -279,87 +239,10 @@ split8(rpow *rpin)
 int
 store (rpow *rp)
 {
-	FILE *fout;
-	rpowio *rpout;
-
-	fout = fopen (rpowfile, "ab");
-	if (fout == NULL)
-	{
-		fprintf (stderr, "Unable to write rpow to %s\n", rpowfile);
-		return -1;
-	}
-	_dolock (fout);
-	rpout = rp_new_from_file (fout);
-	rpow_write (rp, rpout);
-	_dounlock (fout);
-	fclose (fout);
-	rp_free (rpout);
-	return 0;
+	return rpow_to_store(rp);
 }
 
 
-/* Find an rpow in the rpows file and return it */
-static rpow *
-rpow_load (int value)
-{
-	FILE *fin;
-	rpowio *rpio;
-	rpow *rp = NULL;
-	unsigned char *buf;
-	long fpos = 0;
-	long fposprev = 0;
-	int bufsize = 1000;
-	int nr;
-
-	fin = fopen (rpowfile, "r+b");
-	if (fin == NULL)
-	{
-		fprintf (stderr, "Unable to open rpow data file %s\n", rpowfile);
-		return NULL;
-	}
-	_dolock (fin);
-	rpio = rp_new_from_file (fin);
-
-	for ( ; ; )
-	{
-		rp = rpow_read (rpio);
-		fposprev = fpos;
-		fpos = ftell (fin);
-		if (rp == NULL || rp->value == value)
-			break;
-		rpow_free (rp);
-	}
-
-	if (rp == NULL)
-	{
-		_dounlock (fin);
-		fclose (fin);
-		rp_free (rpio);
-		return NULL;
-	}
-
-	/* Delete entry from file */
-	buf = malloc (bufsize);
-	for ( ; ; )
-	{
-		fseek (fin, fpos, SEEK_SET);
-		nr = fread (buf, 1, bufsize, fin);
-		if (nr == 0)
-			break;
-		fseek (fin, fposprev, SEEK_SET);
-		fwrite (buf, 1, nr, fin);
-		fpos += nr;
-		fposprev += nr;
-	}
-	free (buf);
-
-	ftruncate (fileno(fin), (off_t)fposprev);
-	_dounlock (fin);
-	fclose (fin);
-	rp_free (rpio);
-
-	return rp;
-}
 
 /* Helper for load - break num outval items to create numo of size outval */
 static int dobreakval (int num, int val, int numo, int outval)
@@ -374,7 +257,7 @@ static int dobreakval (int num, int val, int numo, int outval)
 	for (i=0; i<num; i++)
 	{
 		vals[i] = val;
-		rp[i] = rpow_load (val);
+		rp[i] = rpow_from_store (val);
 		if (rp[i] == NULL)
 		{
 			/* Error, try to fix it as much as we can */
@@ -404,41 +287,21 @@ static int dobreakval (int num, int val, int numo, int outval)
 /* Helper for load - break items to create some of size val */
 static int dobreak (int val)
 {
-	FILE *fin;
-	rpowio *rpio;
 	int tval;
+	int counts[RPOW_VALUE_MAX-RPOW_VALUE_MIN+1];
 	int count;
 	int maxcount;
-	rpow *rp;
 	int err;
-
-	rpio = rp_new_from_file (fin);
 
 	for (tval = val+1; tval <= RPOW_VALUE_MAX; tval++)
 	{
-		/* Count rpows of value */
-		fin = fopen (rpowfile, "r+b");
-		if (fin == NULL)
+		if (rpow_count(counts) < 0)
 		{
-			fprintf (stderr, "Unable to open rpow data file %s\n", rpowfile);
-			return -1;
+			fprintf (stderr, "Unable to open rpow data store\n");
+			exit (1);
 		}
-		_dolock (fin);
-		rpio = rp_new_from_file (fin);
-		count = 0;
-		for ( ; ; )
-		{
-			rp = rpow_read (rpio);
-			if (rp == NULL)
-				break;
-			if (rp->value == tval)
-				++count;
-			rpow_free (rp);
-		}
-		
-		_dounlock (fin);
-		fclose (fin);
-		rp_free (rpio);
+
+		count = counts[tval - RPOW_VALUE_MIN];
 
 		if (count != 0)
 			break;
@@ -468,10 +331,10 @@ load (int value)
 {
 	rpow *rp;
 
-	if ((rp = rpow_load(value)) == NULL)
+	if ((rp = rpow_from_store(value)) == NULL)
 	{
 		if (dobreak (value) == 0)
-			rp = rpow_load(value);
+			rp = rpow_from_store(value);
 	}
 	return rp;
 }
@@ -480,37 +343,18 @@ load (int value)
 int
 countvals (int val)
 {
-	FILE *fin = fopen (rpowfile, "rb");
-	rpowio *rpio;
-	rpow *rp = NULL;
-	int count = 0;
+	int counts[RPOW_VALUE_MAX - RPOW_VALUE_MIN + 1];
 
 	if (val < RPOW_VALUE_MIN || val > RPOW_VALUE_MAX)
 		return 0;
 
-	if (fin == NULL)
+	if (rpow_count(counts) < 0)
 	{
-		fprintf (stderr, "Unable to open rpow data file %s\n", rpowfile);
+		fprintf (stderr, "Unable to open rpow data storen");
 		return 0;
 	}
 
-	_dolock (fin);
-	rpio = rp_new_from_file (fin);
-
-	for ( ; ; )
-	{
-		rp = rpow_read (rpio);
-		if (rp == NULL)
-			break;
-		if (rp->value == val)
-			++count;
-		rpow_free (rp);
-	}
-
-	_dounlock (fin);
-	fclose (fin);
-	rp_free (rpio);
-	return count;
+	return counts[val-RPOW_VALUE_MIN];
 }
 
 char *

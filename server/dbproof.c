@@ -269,6 +269,7 @@ gettimeofday(&pt,NULL);
 			*proof = db->nodeinfo;
 		if (prooflen)
 			*prooflen = (uchar *)db->nodeptr - db->nodeinfo;
+printf ("New DB root hash:         "); dumpbuf (treehash, HASHSIZE);
 		return found;
 	}
 
@@ -282,6 +283,7 @@ gettimeofday(&pt,NULL);
 	memcpy (db->newnode.childhash[1], newnodehash, HASHSIZE);
 	++db->depth;
 	assert (db->depth <= MAXDEPTH);
+printf ("Splitting top node, increasing DB depth to %d\n", db->depth);
 
 	/* Write out new top node */
 	newtopnodenum = dbnodeseek (db, 0, SEEK_END, NONLEAF);

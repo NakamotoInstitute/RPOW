@@ -30,127 +30,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <fcntl.h>
 #include <sys/types.h>
-#include <errno.h>
 
 #include "rpowcli.h"
-
-#if defined(_WIN32)
-#define ftruncate chsize
-#endif
 
 #define RPOW_VERSION	"RPOW client version 1.1.0"
 
 static pubkey signkey;
-
-static void
-dolock (FILE *f)
-{
-#ifndef _WIN32
-	struct flock l;
-	l.l_start = l.l_len = 0;
-	l.l_pid = 0;
-	l.l_type = F_WRLCK;
-	l.l_whence = SEEK_SET;
-	while (fcntl (fileno(f), F_SETLKW, &l) < 0 && errno == EINTR)
-		;
-#endif
-}
-
-static void
-dounlock (FILE *f)
-{
-#ifndef _WIN32
-	struct flock l;
-	l.l_start = l.l_len = 0;
-	l.l_pid = 0;
-	l.l_type = F_UNLCK;
-	l.l_whence = SEEK_SET;
-	fcntl (fileno(f), F_SETLK, &l);
-#endif
-}
-
-static void
-rpow_to_file (rpow *rp, const char *fname)
-{
-	FILE *fout;
-	rpowio *rpout;
-
-	fout = fopen (fname, "ab");
-	if (fout == NULL)
-	{
-		fprintf (stderr, "Unable to write rpow to %s\n", fname);
-		exit (1);
-	}
-	dolock (fout);
-	fseek (fout, 0, SEEK_END);
-	rpout = rp_new_from_file (fout);
-	rpow_write (rp, rpout);
-	dounlock (fout);
-	fclose (fout);
-	rp_free (rpout);
-}
-
-
-static rpow * rpow_from_file (int value, const char *fname)
-{
-	FILE *fin;
-	rpowio *rpio;
-	rpow *rp = NULL;
-	uchar *buf;
-	long fpos = 0;
-	long fposprev = 0;
-	int bufsize = 1000;
-	int nr;
-
-	fin = fopen (fname, "r+b");
-	if (fin == NULL)
-	{
-		fprintf (stderr, "Unable to open rpow data file %s\n", fname);
-		exit (1);
-	}
-	dolock (fin);
-	rpio = rp_new_from_file (fin);
-
-	for ( ; ; )
-	{
-		rp = rpow_read (rpio);
-		fposprev = fpos;
-		fpos = ftell (fin);
-		if (rp == NULL || rp->value == value)
-			break;
-		rpow_free (rp);
-	}
-
-	if (rp == NULL)
-	{
-		dounlock (fin);
-		return NULL;
-	}
-
-	/* Delete entry from file */
-	buf = malloc (bufsize);
-	for ( ; ; )
-	{
-		fseek (fin, fpos, SEEK_SET);
-		nr = fread (buf, 1, bufsize, fin);
-		if (nr == 0)
-			break;
-		fseek (fin, fposprev, SEEK_SET);
-		fwrite (buf, 1, nr, fin);
-		fpos += nr;
-		fposprev += nr;
-	}
-	free (buf);
-
-	ftruncate (fileno(fin), (off_t)fposprev);
-	dounlock (fin);
-	fclose (fin);
-	rp_free (rpio);
-
-	return rp;
-}
 
 
 static int
@@ -163,8 +49,8 @@ dogen (char *target, int port, int value)
 	rp = rpow_gen (value, signkey.cardid);
 	if (rp == NULL)
 	{
-		fprintf (stderr, "Unable to generate a coin of value %d\n", value);
-		exit (2);
+		fprintf (stderr, "Unable to generate an rpow of value %d\n", value);
+		exit (-1);
 	}
 
 	err = server_exchange (&rpnew, target, port, 1, &rp, 1, &value, &signkey);
@@ -172,13 +58,14 @@ dogen (char *target, int port, int value)
 		exit (err);
 
 	rpow_free (rp);
-	rpow_to_file (rpnew, rpowfile);
+	if (rpow_to_store (rpnew) < 0)
+		fprintf (stderr, "Error, unable to store rpow\n");
 
 	return 0;
 }
 
 
-/* Continue to generate coins until interrupted; consolidate them too */
+/* Continue to generate rpows until interrupted; consolidate them too */
 static int
 dogencontin (char *target, int port)
 {
@@ -203,16 +90,16 @@ printf ("Using hashcash core %s\n", hashcash_core_name(hashcash_core()));
 		rp[numgen++] = rpow_gen (genval, signkey.cardid);
 		if (rp == NULL)
 		{
-			fprintf (stderr, "Unable to generate a coin of value %d\n", genval);
+			fprintf (stderr, "Unable to generate an rpow of value %d\n", genval);
 			exit (2);
 		}
-printf ("Generated a coin of value %d\n", genval);
+printf ("Generated an rpow of value %d\n", genval);
 
 		if (numgen == 8)
 		{
 			int i;
 			outval = genval + 3;
-printf ("Exchanging %d coins of value %d for one of value %d\n", numgen, genval, outval);
+printf ("Exchanging %d rpows of value %d for one of value %d\n", numgen, genval, outval);
 			err = server_exchange (&rpnew, target, port, numgen, rp,
 				1, &outval, &signkey);
 			if (err != 0)
@@ -224,10 +111,11 @@ putchar ('\n');}
 }
 			for (i=0; i<numgen; i++)
 				rpow_free (rp[i]);
-			rpow_to_file (rpnew, rpowfile);
+			if (rpow_to_store (rpnew) < 0)
+				fprintf (stderr, "Error, unable to store rpow\n");
 			rpow_free (rpnew);
 
-			/* Adjust size so it takes 10 to 60 minutes to do 8 coins */
+			/* Adjust size so it takes 10 to 60 minutes to do 8 rpows */
 			endtime = time(0);
 printf ("Took %02d mins %02d secs\n", (endtime-starttime)/60, (endtime-starttime)%60);
 			if (endtime - starttime < 600 && genval < RPOW_VALUE_MAX)
@@ -252,12 +140,15 @@ static int doconsolval (char *target, int port, int num, int val, int outval)
 	for (i=0; i<num; i++)
 	{
 		vals[i] = val;
-		rp[i] = rpow_from_file (val, rpowfile);
+		rp[i] = rpow_from_store (val);
 		if (rp[i] == NULL)
 		{
 			/* Error, try to fix it as much as we can */
 			while (--i >= 0)
-				rpow_to_file (rp[i], rpowfile);
+			{
+				if (rpow_to_store (rp[i]) < 0)
+					fprintf (stderr, "Error, unable to store rpow\n");
+			}
 			return -1;
 		}
 	}
@@ -266,51 +157,35 @@ static int doconsolval (char *target, int port, int num, int val, int outval)
 	if (err != 0)
 	{
 		for (i=0; i<num; i++)
-			rpow_to_file (rp[i], rpowfile);
+		{
+			if (rpow_to_store (rp[i]) < 0)
+				fprintf (stderr, "Error, unable to store rpow\n");
+		}
 		return err;
 	}
 
-	rpow_to_file (rpnew, rpowfile);
+	if (rpow_to_store (rpnew) < 0)
+		fprintf (stderr, "Error, unable to store rpow\n");
 	return 0;
 }
 
-/* Consolidate coins into as few as possible */
+/* Consolidate rpows into as few as possible */
 static int doconsol (char *target, int port)
 {
-	FILE *fin;
-	rpowio *rpio;
 	int val;
 	int count;
-	rpow *rp;
+	int counts[RPOW_VALUE_MAX - RPOW_VALUE_MIN + 1];
 	int err;
-
-	rpio = rp_new_from_file (fin);
 
 	for (val = RPOW_VALUE_MIN; val <= RPOW_VALUE_MAX; val++)
 	{
 		/* Count rpows of value */
-		fin = fopen (rpowfile, "r+b");
-		if (fin == NULL)
+		if (rpow_count (counts) < 0)
 		{
-			fprintf (stderr, "Unable to open rpow data file %s\n", rpowfile);
+			fprintf (stderr, "Unable to open rpow data store\n");
 			exit (1);
 		}
-		dolock (fin);
-		rpio = rp_new_from_file (fin);
-		count = 0;
-		for ( ; ; )
-		{
-			rp = rpow_read (rpio);
-			if (rp == NULL)
-				break;
-			if (rp->value == val)
-				++count;
-			rpow_free (rp);
-		}
-		
-		dounlock (fin);
-		fclose (fin);
-		rp_free (rpio);
+		count = counts[val - RPOW_VALUE_MIN];
 
 		while (count >= 8 && val+3 <= RPOW_VALUE_MAX)
 		{
@@ -336,6 +211,7 @@ static int doconsol (char *target, int port)
 			count -= 2;
 		}
 	}
+	return 0;
 }
 
 static int doin (char *target, int port)
@@ -390,7 +266,8 @@ static int doin (char *target, int port)
 		exit (err);
 
 	rpow_free (rp);
-	rpow_to_file (rpnew, rpowfile);
+	if (rpow_to_store (rpnew) < 0)
+		fprintf (stderr, "Error, unable to store rpow\n");
 
 	printf ("Received rpow item of value %d\n", rpnew->value);
 	return rpnew->value;
@@ -411,12 +288,15 @@ static int dobreakval (char *target, int port, int num, int val,
 	for (i=0; i<num; i++)
 	{
 		vals[i] = val;
-		rp[i] = rpow_from_file (val, rpowfile);
+		rp[i] = rpow_from_store (val);
 		if (rp[i] == NULL)
 		{
 			/* Error, try to fix it as much as we can */
 			while (--i >= 0)
-				rpow_to_file (rp[i], rpowfile);
+			{
+				if (rpow_to_store (rp[i]) < 0)
+					fprintf (stderr, "Error, unable to store rpow\n");
+			}
 			return -1;
 		}
 	}
@@ -428,53 +308,39 @@ static int dobreakval (char *target, int port, int num, int val,
 	if (err != 0)
 	{
 		for (i=0; i<num; i++)
-			rpow_to_file (rp[i], rpowfile);
+		{
+			if (rpow_to_store (rp[i]) < 0)
+				fprintf (stderr, "Error, unable to store rpow\n");
+		}
 		return err;
 	}
 
 	for (i=0; i<numo; i++)
-		rpow_to_file (rpnew[i], rpowfile);
+	{
+		if (rpow_to_store (rpnew[i]) < 0)
+			fprintf (stderr, "Error, unable to store rpow\n");
+	}
 	return 0;
 }
 
 /* Helper for doout - break items to create some of size val */
 static int dobreak (char *target, int port, int val)
 {
-	FILE *fin;
-	rpowio *rpio;
 	int tval;
+	int counts[RPOW_VALUE_MAX-RPOW_VALUE_MIN+1];
 	int count;
 	int maxcount;
-	rpow *rp;
 	int err;
-
-	rpio = rp_new_from_file (fin);
 
 	for (tval = val+1; tval <= RPOW_VALUE_MAX; tval++)
 	{
-		/* Count rpows of value */
-		fin = fopen (rpowfile, "r+b");
-		if (fin == NULL)
+		if (rpow_count(counts) < 0)
 		{
-			fprintf (stderr, "Unable to open rpow data file %s\n", rpowfile);
+			fprintf (stderr, "Unable to open rpow data store\n");
 			exit (1);
 		}
-		dolock (fin);
-		rpio = rp_new_from_file (fin);
-		count = 0;
-		for ( ; ; )
-		{
-			rp = rpow_read (rpio);
-			if (rp == NULL)
-				break;
-			if (rp->value == tval)
-				++count;
-			rpow_free (rp);
-		}
-		
-		dounlock (fin);
-		fclose (fin);
-		rp_free (rpio);
+
+		count = counts[tval - RPOW_VALUE_MIN];
 
 		if (count != 0)
 			break;
@@ -508,11 +374,11 @@ static int doout (char *target, int port, int value)
 	int ptrlen;
 	int outlen;
 
-	rp = rpow_from_file (value, rpowfile);
+	rp = rpow_from_store (value);
 	if (rp == NULL)
 	{
 		if (dobreak (target, port, value) < 0 ||
-			(rp = rpow_from_file (value, rpowfile)) == NULL )
+			(rp = rpow_from_store (value)) == NULL )
 		{
 			fprintf (stderr, "Unable to find RPOW of value %d\n", value);
 			exit (2);
@@ -547,12 +413,15 @@ static int doexch (char *target, int port, int nin, int *invals,
 
 	for (i=0; i<nin; i++)
 	{
-		rp[i] = rpow_from_file (invals[i], rpowfile);
+		rp[i] = rpow_from_store (invals[i]);
 		if (rp[i] == NULL)
 		{
 			fprintf (stderr, "Unable to find RPOW with value %d\n", invals[i]);
 			while (i-- > 0)
-				rpow_to_file (rp[i], rpowfile);
+			{
+				if (rpow_to_store (rp[i]) < 0)
+					fprintf (stderr, "Error, unable to store rpow\n");
+			}
 			exit (2);
 		}
 	}
@@ -563,13 +432,17 @@ static int doexch (char *target, int port, int nin, int *invals,
 	{
 		/* Try putting the ones back we puled out */
 		for (i=0; i<nin; i++)
-			rpow_to_file (rp[i], rpowfile);
+		{
+			if (rpow_to_store (rp[i]) < 0)
+				fprintf (stderr, "Error, unable to store rpow\n");
+		}
 		exit (err);
 	}
 
 	for (i=0; i<nout; i++)
 	{
-		rpow_to_file (rpnew[i], rpowfile);
+		if (rpow_to_store (rpnew[i]) < 0)
+			fprintf (stderr, "Error, unable to store rpow\n");
 		rpow_free (rpnew[i]);
 	}
 	for (i=0; i<nin; i++)
@@ -583,49 +456,25 @@ static int doexch (char *target, int port, int nin, int *invals,
 
 static int docount ()
 {
-	FILE *fin = fopen (rpowfile, "r+b");
-	rpowio *rpio;
-	rpow *rp = NULL;
-	int nexps = RPOW_VALUE_MAX - RPOW_VALUE_MIN + 1;
 	int expcounts[RPOW_VALUE_MAX - RPOW_VALUE_MIN + 1];
+	int count;
 	int exp;
-	int count = 0;
 
-	memset (expcounts, 0, sizeof(expcounts));
+	count = rpow_count (expcounts);
 
-	if (fin == NULL)
+	if (count < 0)
 	{
-		fprintf (stderr, "Unable to open rpow data file %s\n", rpowfile);
+		fprintf (stderr, "Unable to open rpow data store\n");
 		exit (1);
 	}
 
-	dolock (fin);
-	rpio = rp_new_from_file (fin);
+	printf ("%d rpows in rpow data store:\n", count);
 
-	for ( ; ; )
+	for (exp=RPOW_VALUE_MIN; exp<=RPOW_VALUE_MAX; ++exp)
 	{
-		rp = rpow_read (rpio);
-		if (rp == NULL)
-			break;
-		if (rp->value < RPOW_VALUE_MIN || rp->value > RPOW_VALUE_MAX)
-		{
-			fprintf (stderr,
-				"Skipping rpow with invalid value %d\n", rp->value);
-		} else {
-			++expcounts[rp->value - RPOW_VALUE_MIN];
-			++count;
-		}
+		if (expcounts[exp-RPOW_VALUE_MIN] > 0)
+			printf ("  value %2d: %d\n", exp, expcounts[exp-RPOW_VALUE_MIN]);
 	}
-
-	printf ("%d rpows in rpow data file %s:\n", count, rpowfile);
-	for (exp=0; exp<nexps; ++exp)
-	{
-		if (expcounts[exp] > 0)
-			printf ("  value %2d: %d\n", RPOW_VALUE_MIN+exp, expcounts[exp]);
-	}
-	dounlock (fin);
-	fclose (fin);
-	rp_free (rpio);
 	return 0;
 }
 

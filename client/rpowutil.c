@@ -32,9 +32,16 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "rpowcli.h"
 #include "hashcash.h"
+
+
+#if defined(_WIN32)
+#define ftruncate chsize
+#endif
+
 
 #if defined(_WIN32)
 #define ntohl(x) ((((x)>>24)&0xff)|(((x)>>8)&0xff00)| \
@@ -862,3 +869,152 @@ done:
 	return stat;
 }
 #endif
+
+
+
+static void
+dolock (FILE *f)
+{
+#ifndef _WIN32
+	struct flock l;
+	l.l_start = l.l_len = 0;
+	l.l_pid = 0;
+	l.l_type = F_WRLCK;
+	l.l_whence = SEEK_SET;
+	while (fcntl (fileno(f), F_SETLKW, &l) < 0 && errno == EINTR)
+		;
+#endif
+}
+
+static void
+dounlock (FILE *f)
+{
+#ifndef _WIN32
+	struct flock l;
+	l.l_start = l.l_len = 0;
+	l.l_pid = 0;
+	l.l_type = F_UNLCK;
+	l.l_whence = SEEK_SET;
+	fcntl (fileno(f), F_SETLK, &l);
+#endif
+}
+
+int
+rpow_to_store (rpow *rp)
+{
+	FILE *fout;
+	rpowio *rpout;
+
+	fout = fopen (rpowfile, "ab");
+	if (fout == NULL)
+	{
+		return -1;
+	}
+	dolock (fout);
+	fseek (fout, 0, SEEK_END);
+	rpout = rp_new_from_file (fout);
+	rpow_write (rp, rpout);
+	dounlock (fout);
+	fclose (fout);
+	rp_free (rpout);
+	return 0;
+}
+
+
+rpow *
+rpow_from_store (int value)
+{
+	FILE *fin;
+	rpowio *rpio;
+	rpow *rp = NULL;
+	uchar *buf;
+	long fpos = 0;
+	long fposprev = 0;
+	int bufsize = 1000;
+	int nr;
+
+	fin = fopen (rpowfile, "r+b");
+	if (fin == NULL)
+	{
+		return NULL;
+	}
+	dolock (fin);
+	rpio = rp_new_from_file (fin);
+
+	for ( ; ; )
+	{
+		rp = rpow_read (rpio);
+		fposprev = fpos;
+		fpos = ftell (fin);
+		if (rp == NULL || rp->value == value)
+			break;
+		rpow_free (rp);
+	}
+
+	if (rp == NULL)
+	{
+		dounlock (fin);
+		return NULL;
+	}
+
+	/* Delete entry from file */
+	buf = malloc (bufsize);
+	for ( ; ; )
+	{
+		fseek (fin, fpos, SEEK_SET);
+		nr = fread (buf, 1, bufsize, fin);
+		if (nr == 0)
+			break;
+		fseek (fin, fposprev, SEEK_SET);
+		fwrite (buf, 1, nr, fin);
+		fpos += nr;
+		fposprev += nr;
+	}
+	free (buf);
+
+	ftruncate (fileno(fin), (off_t)fposprev);
+	dounlock (fin);
+	fclose (fin);
+	rp_free (rpio);
+
+	return rp;
+}
+
+/* Fill in the counts array with how many rpows in the store of each value */
+int
+rpow_count (int counts[RPOW_VALUE_MAX - RPOW_VALUE_MIN + 1])
+{
+	FILE *fin = fopen (rpowfile, "r+b");
+	rpowio *rpio;
+	rpow *rp = NULL;
+	int nexps = RPOW_VALUE_MAX - RPOW_VALUE_MIN + 1;
+	int exp;
+	int rcount = 0;
+
+	memset (counts, 0, (RPOW_VALUE_MAX-RPOW_VALUE_MIN+1)*sizeof(int));
+
+	if (fin == NULL)
+		return -1;
+
+	dolock (fin);
+	rpio = rp_new_from_file (fin);
+
+	for ( ; ; )
+	{
+		rp = rpow_read (rpio);
+		if (rp == NULL)
+			break;
+		if (rp->value < RPOW_VALUE_MIN || rp->value > RPOW_VALUE_MAX)
+		{
+			/* Skip invalid rpow */
+		} else {
+			++counts[rp->value - RPOW_VALUE_MIN];
+			++rcount;
+		}
+	}
+
+	dounlock (fin);
+	fclose (fin);
+	rp_free (rpio);
+	return rcount;
+}

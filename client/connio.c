@@ -266,7 +266,7 @@ getstat (char *target, int port, FILE *fout)
 	long				rc;
 	struct encstate		encdata;
 	unsigned long		statbuflen;
-    int					s;
+	int					s;
 	unsigned char		cmd;
 	unsigned short		cmdbuflen;
 	unsigned char		*encbuf1;
@@ -618,23 +618,115 @@ dumpbuf (FILE *f, unsigned char *buf, int len, int printoff, int breaklines)
 		printf ("\n");
 }
 
+/* Support SOCKS V5 for anonymity */
+static int
+dosocksconnect (char *target, int port)
+{
+	SOCKET				s;
+	struct sockaddr_in	sockaddr;
+	struct hostent		*targetinfo;
+	int					hostlen = strlen(target);
+	unsigned char		msg[300];
+
+	if (hostlen + 7 > sizeof(msg)) {
+		fprintf (stderr, "Host name %s is too long\n", target);
+		return -1;
+	}
+
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	if (s < 0) {
+		perror ("socket");
+		return -1;
+	}
+	sockaddr.sin_family = AF_INET;
+	sockaddr.sin_port = htons(socksport);
+	if (!(targetinfo = gethostbyname(sockshost))) {
+		fprintf (stderr, "Unknown SOCKS host machine name %s\n", sockshost);
+		return -1;
+	}
+	if (!targetinfo->h_addr_list) {
+		fprintf (stderr, "No address information available for %s\n",
+			 target);
+		return -1;
+	}
+	sockaddr.sin_addr.s_addr = **(u_long **)targetinfo->h_addr_list;
+
+	if (connect (s, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) < 0) {
+		perror ("connect");
+		return -1;
+	}
+
+	/* See RFC 1928 for SOCKS V5 */
+	msg[0] = 5;	/* version */
+	msg[1] = 1;	/* number of authenticator methods */
+	msg[2] = 0;	/* 0 means no authentication */
+	if (send (s, msg, 3, 0) != 3) {
+		perror ("send");
+		return -1;
+	}
+
+	/* Reply: version, selected auth */
+	if (recv (s, msg, 2, 0) != 2) {
+		perror ("recv");
+		return -1;
+	}
+
+	if (msg[0] != 5 || msg[1] != 0) {
+		fprintf (stderr, "Unable to authenticate to SOCKS server %s\n",
+			sockshost);
+		return -1;
+	}
+
+	msg[0] = 5;	/* version */
+	msg[1] = 1;	/* command: connect(1) */
+	msg[2] = 0;	/* reserved */
+	msg[3] = 3; /* address type */
+	msg[4] = (unsigned char)hostlen;
+	strcpy (msg+5, target);
+	msg[5+hostlen] = (unsigned char)(port >> 8);
+	msg[6+hostlen] = (unsigned char)port;
+
+	if (send (s, msg, hostlen+7, 0) != hostlen+7) {
+		perror ("send");
+		return -1;
+	}
+
+	if (recv (s, msg, sizeof(msg), 0) < 7) {
+		perror ("recv");
+		return -1;
+	}
+
+	if (msg[0] != 5 || msg[1] != 0) {
+		fprintf (stderr, "Socks error %d\n", msg[1]);
+		return -1;
+	}
+
+	/* Success! */
+
+	return s;
+}
+
 static int
 doconnect (char *target, int port)
 {
-    SOCKET				s;
-    struct sockaddr_in	sockaddr;
+	SOCKET				s;
+	struct sockaddr_in	sockaddr;
 	struct hostent		*targetinfo;
 
 #if defined(_WIN32)
 	WSAStartup (0x0101, &ws);
 #endif
-    s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) {
+
+	if (usesocks)
+		return dosocksconnect (target, port);
+
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	if (s < 0) {
 		perror ("socket");
 		return -1;
-    }
-    sockaddr.sin_family = AF_INET;
-    sockaddr.sin_port = htons(port);
+	}
+	sockaddr.sin_family = AF_INET;
+	sockaddr.sin_port = htons(port);
 	if (!(targetinfo = gethostbyname(target))) {
 		fprintf (stderr, "Unknown target machine name\n");
 		return -1;

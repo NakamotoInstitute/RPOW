@@ -64,7 +64,7 @@ DEFAGENT;
 #define UNBLOCK		0
 
 /* How long to wait on incoming connections */
-#define TIMEOUTSECS	2
+#define TIMEOUTSECS	3
 
 unsigned char bigbuf[CHAINSIZE];
 unsigned char chainbuf[CHAINSIZE];
@@ -76,7 +76,7 @@ int alarmflag;
 sccAdapterHandle_t handle;
 sccRB_t            rb;
 
-static void dumpbuf (unsigned char *buf, int len);
+void dumpbuf (unsigned char *buf, int len);
 static int nread (int fd, void *buf, unsigned count);
 long SCC_CALL _sccRequest(sccAdapterHandle_t adapter_handle, sccRB_t *request_block);
 static int dokeygen (int numdbs);
@@ -545,11 +545,11 @@ dolisten (int port, int numdbs)
 	int					found;
 	unsigned char		*proof;
 	unsigned 			prooflen;
-    SOCKET				s, s1;
+	SOCKET				s, s1;
 	unsigned char		cmd;
-    struct sockaddr_in	sockaddr, otheraddr;
+	struct sockaddr_in	sockaddr, otheraddr;
 	int					otheraddrsize = sizeof(otheraddr);
-    int					reuseflag = -1;
+	int					reuseflag = -1;
 	unsigned char		roothashbuf[HASHSIZE];
 	unsigned int		fileid;
 	FILE				*fchain;
@@ -586,15 +586,15 @@ unsigned int debug3[100];
 #endif
 
 	/* Begin listening on socket */
-    s = socket(AF_INET, SOCK_STREAM, 0);
-    if (s < 0) {
+	s = socket(AF_INET, SOCK_STREAM, 0);
+	if (s < 0) {
 		perror ("socket");
 		exit (2);
-    }
-    sockaddr.sin_family = AF_INET;
-    sockaddr.sin_port = htons((short)port);
+	}
+	sockaddr.sin_family = AF_INET;
+	sockaddr.sin_port = htons((short)port);
 	sockaddr.sin_addr.s_addr = INADDR_ANY;
-    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuseflag, sizeof(reuseflag));
+	setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuseflag, sizeof(reuseflag));
 	if (bind (s, (struct sockaddr *)&sockaddr, sizeof(sockaddr)) < 0) {
 		perror ("bind");
 		exit (2);
@@ -750,8 +750,11 @@ rb.pInBuffer[3] = (unsigned char *)debug3;
 					proof = NULL;
 					found = 1;
 				} else {
+printf ("Host querying DB %d with hash ", fileid);
+dumpbuf (bigbuf, HASHSIZE);
+printf ("Host expects DB root hash ");
+dumpbuf (roothashbuf, HASHSIZE);
 					found = testdbandset (db[fileid], &proof, &prooflen, bigbuf);
-printf ("Host querying DB %d, found = %d\n", fileid, found);
 				}
 
 				/* Send the proof */
@@ -804,6 +807,7 @@ rb.pInBuffer[3] = (unsigned char *)debug3;
 			close (s1);
 			break;
 		}
+		fflush (stdout);
 	}
 
 	/* never gets here */
@@ -817,7 +821,7 @@ rb.pInBuffer[3] = (unsigned char *)debug3;
 }
 
 
-static void
+void
 dumpbuf (unsigned char *buf, int len)
 {
 	int i;
@@ -825,11 +829,14 @@ dumpbuf (unsigned char *buf, int len)
 
 	for (i=0; i<len; i++)
 	{
+#if 0
 		if (i%16 == 0) {
 			printf ("%04x  ", off);
 			off += 16;
 		}
-		printf ("%02x%s", buf[i], ((i+1)%16 == 0) ? "\n" : " ");
+#endif
+//		printf ("%02x%s", buf[i], ((i+1)%16 == 0) ? "\n" : " ");
+		printf ("%02x ", buf[i]);
 	}
 	if (len%16 != 0)
 		printf ("\n");
